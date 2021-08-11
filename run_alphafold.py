@@ -36,6 +36,52 @@ from alphafold.model import model
 from alphafold.relax import relax
 # Internal import (7716).
 
+
+
+
+# Path to directory of supporting data, contains 'params' dir.
+data_dir = '/proj/wallner/share/alphafold_data'
+DOWNLOAD_DIR= data_dir
+
+# Path to the Uniref90 database for use by JackHMMER.
+uniref90_database_path = os.path.join(
+    DOWNLOAD_DIR, 'uniref90', 'uniref90.fasta')
+
+# Path to the MGnify database for use by JackHMMER.
+mgnify_database_path = os.path.join(
+    DOWNLOAD_DIR, 'mgnify', 'mgy_clusters.fa')
+
+# Path to the BFD database for use by HHblits.
+bfd_database_path = os.path.join(
+    DOWNLOAD_DIR, 'bfd',
+    'bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt')
+
+# Path to the Uniclust30 database for use by HHblits.
+uniclust30_database_path = os.path.join(
+    DOWNLOAD_DIR, 'uniclust30', 'uniclust30_2018_08', 'uniclust30_2018_08')
+
+# Path to the PDB70 database for use by HHsearch.
+pdb70_database_path = os.path.join(DOWNLOAD_DIR, 'pdb70', 'pdb70')
+
+# Path to a directory with template mmCIF structures, each named <pdb_id>.cif')
+template_mmcif_dir = os.path.join(DOWNLOAD_DIR, 'pdb_mmcif', 'mmcif_files')
+
+# Path to a file mapping obsolete PDB IDs to their replacements.
+obsolete_pdbs_path = os.path.join(DOWNLOAD_DIR, 'pdb_mmcif', 'obsolete.dat')
+
+#### END OF USER CONFIGURATION ####
+
+# Names of models to use.
+model_names = [
+    'model_1',
+    'model_2',
+    'model_3',
+    'model_4',
+    'model_5',
+]
+
+
+
 flags.DEFINE_list('fasta_paths', None, 'Paths to FASTA files, each containing '
                   'one sequence. Paths should be separated by commas. '
                   'All FASTA paths must have a unique basename as the '
@@ -43,31 +89,31 @@ flags.DEFINE_list('fasta_paths', None, 'Paths to FASTA files, each containing '
                   'each prediction.')
 flags.DEFINE_string('output_dir', None, 'Path to a directory that will '
                     'store the results.')
-flags.DEFINE_list('model_names', None, 'Names of models to use.')
-flags.DEFINE_string('data_dir', None, 'Path to directory of supporting data.')
-flags.DEFINE_string('jackhmmer_binary_path', '/usr/bin/jackhmmer',
+flags.DEFINE_list('model_names', model_names, 'Names of models to use.')
+flags.DEFINE_string('data_dir', data_dir, 'Path to directory of supporting data.')
+flags.DEFINE_string('jackhmmer_binary_path', '/proj/wallner/apps/hmmer-3.2.1/bin/jackhmmer',
                     'Path to the JackHMMER executable.')
-flags.DEFINE_string('hhblits_binary_path', '/usr/bin/hhblits',
+flags.DEFINE_string('hhblits_binary_path', '/proj/wallner/apps/hhsuite/bin/hhblits',
                     'Path to the HHblits executable.')
-flags.DEFINE_string('hhsearch_binary_path', '/usr/bin/hhsearch',
+flags.DEFINE_string('hhsearch_binary_path', '/proj/wallner/apps/hhsuite/bin/hhsearch',
                     'Path to the HHsearch executable.')
-flags.DEFINE_string('kalign_binary_path', '/usr/bin/kalign',
+flags.DEFINE_string('kalign_binary_path', '/proj/wallner/apps/kalign/src/kalign',
                     'Path to the Kalign executable.')
-flags.DEFINE_string('uniref90_database_path', None, 'Path to the Uniref90 '
+flags.DEFINE_string('uniref90_database_path', uniref90_database_path, 'Path to the Uniref90 '
                     'database for use by JackHMMER.')
-flags.DEFINE_string('mgnify_database_path', None, 'Path to the MGnify '
+flags.DEFINE_string('mgnify_database_path', mgnify_database_path, 'Path to the MGnify '
                     'database for use by JackHMMER.')
-flags.DEFINE_string('bfd_database_path', None, 'Path to the BFD '
+flags.DEFINE_string('bfd_database_path', bfd_database_path, 'Path to the BFD '
                     'database for use by HHblits.')
-flags.DEFINE_string('uniclust30_database_path', None, 'Path to the Uniclust30 '
+flags.DEFINE_string('uniclust30_database_path', uniclust30_database_path, 'Path to the Uniclust30 '
                     'database for use by HHblits.')
-flags.DEFINE_string('pdb70_database_path', None, 'Path to the PDB70 '
+flags.DEFINE_string('pdb70_database_path', pdb70_database_path, 'Path to the PDB70 '
                     'database for use by HHsearch.')
-flags.DEFINE_string('template_mmcif_dir', None, 'Path to a directory with '
+flags.DEFINE_string('template_mmcif_dir', template_mmcif_dir, 'Path to a directory with '
                     'template mmCIF structures, each named <pdb_id>.cif')
-flags.DEFINE_string('max_template_date', None, 'Maximum template release date '
+flags.DEFINE_string('max_template_date', '2050-01-01', 'Maximum template release date '
                     'to consider. Important if folding historical test sets.')
-flags.DEFINE_string('obsolete_pdbs_path', None, 'Path to file containing a '
+flags.DEFINE_string('obsolete_pdbs_path', obsolete_pdbs_path, 'Path to file containing a '
                     'mapping from obsolete PDB IDs to the PDB IDs of their '
                     'replacements.')
 flags.DEFINE_enum('preset', 'full_dbs', ['full_dbs', 'casp14'],
@@ -82,8 +128,11 @@ flags.DEFINE_integer('random_seed', None, 'The random seed for the data '
                      'that even if this is set, Alphafold may still not be '
                      'deterministic, because processes like GPU inference are '
                      'nondeterministic.')
-FLAGS = flags.FLAGS
+flags.DEFINE_integer('nstruct',1,'number of structures to generate for each model')
 
+FLAGS = flags.FLAGS
+#print(FLAGS)
+#sys.exit()
 MAX_TEMPLATE_HITS = 20
 RELAX_MAX_ITERATIONS = 0
 RELAX_ENERGY_TOLERANCE = 2.39
@@ -126,76 +175,85 @@ def predict_structure(
   plddts = {}
 
   # Run the models.
-  for model_name, model_runner in model_runners.items():
-    logging.info('Running model %s', model_name)
+  for network_model_name, model_runner in model_runners.items():
+    logging.info('Running model %s', network_model_name)
     t_0 = time.time()
     processed_feature_dict = model_runner.process_features(
         feature_dict, random_seed=random_seed)
-    timings[f'process_features_{model_name}'] = time.time() - t_0
+    timings[f'process_features_{network_model_name}'] = time.time() - t_0
 
     t_0 = time.time()
-    prediction_result = model_runner.predict(processed_feature_dict)
-    t_diff = time.time() - t_0
-    timings[f'predict_and_compile_{model_name}'] = t_diff
-    logging.info(
-        'Total JAX model %s predict time (includes compilation time, see --benchmark): %.0f?',
-        model_name, t_diff)
+    for model_no in range(1,FLAGS.nstruct+1):
+      model_name=f'{network_model_name}_{model_no}'
+      unrelaxed_pdb_path = os.path.join(output_dir, f'unrelaxed_{model_name}.pdb')
+      relaxed_output_path = os.path.join(output_dir, f'relaxed_{model_name}.pdb')
+      if not os.path.exists(relaxed_output_path):
+      
+        prediction_result = model_runner.predict(processed_feature_dict)
+        t_diff = time.time() - t_0
+        timings[f'predict_and_compile_{model_name}'] = t_diff
+        logging.info(
+          'Total JAX model %s predict time (includes compilation time, see --benchmark): %.0f?',
+          model_name, t_diff)
 
-    if benchmark:
-      t_0 = time.time()
-      model_runner.predict(processed_feature_dict)
-      timings[f'predict_benchmark_{model_name}'] = time.time() - t_0
+        if benchmark:
+          t_0 = time.time()
+          model_runner.predict(processed_feature_dict)
+          timings[f'predict_benchmark_{model_name}'] = time.time() - t_0
 
-    # Get mean pLDDT confidence metric.
-    plddts[model_name] = np.mean(prediction_result['plddt'])
+        # Get mean pLDDT confidence metric.
+        plddts[model_name] = np.mean(prediction_result['plddt'])
 
-    # Save the model outputs.
-    result_output_path = os.path.join(output_dir, f'result_{model_name}.pkl')
-    with open(result_output_path, 'wb') as f:
-      pickle.dump(prediction_result, f, protocol=4)
-
-    unrelaxed_protein = protein.from_prediction(processed_feature_dict,
+        # Save the model outputs.
+        result_output_path = os.path.join(output_dir, f'result_{model_name}.pkl')
+        with open(result_output_path, 'wb') as f:
+          pickle.dump(prediction_result, f, protocol=4)
+        unrelaxed_protein = protein.from_prediction(processed_feature_dict,
                                                 prediction_result)
+        with open(unrelaxed_pdb_path, 'w') as f:
+          f.write(protein.to_pdb(unrelaxed_protein))
+          f.write(f"pLLDT MEAN   {np.mean(prediction_result['plddt'])}\n")
+          f.write(f"pLLDT MEDIAN {np.median(prediction_result['plddt'])}\n")
 
-    unrelaxed_pdb_path = os.path.join(output_dir, f'unrelaxed_{model_name}.pdb')
-    with open(unrelaxed_pdb_path, 'w') as f:
-      f.write(protein.to_pdb(unrelaxed_protein))
+                  
+      # Relax the prediction.
 
-    # Relax the prediction.
-    t_0 = time.time()
-    relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
-    timings[f'relax_{model_name}'] = time.time() - t_0
+#      if not os.path.exists(relaxed_output_path):
+        t_0 = time.time()
+        relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
+        timings[f'relax_{model_name}'] = time.time() - t_0
 
-    relaxed_pdbs[model_name] = relaxed_pdb_str
+        relaxed_pdbs[model_name] = relaxed_pdb_str
 
-    # Save the relaxed PDB.
-    relaxed_output_path = os.path.join(output_dir, f'relaxed_{model_name}.pdb')
-    with open(relaxed_output_path, 'w') as f:
-      f.write(relaxed_pdb_str)
+        # Save the relaxed PDB.
+        with open(relaxed_output_path, 'w') as f:
+            f.write(relaxed_pdb_str)
+                  
 
-  # Rank by pLDDT and write out relaxed PDBs in rank order.
-  ranked_order = []
-  for idx, (model_name, _) in enumerate(
-      sorted(plddts.items(), key=lambda x: x[1], reverse=True)):
-    ranked_order.append(model_name)
-    ranked_output_path = os.path.join(output_dir, f'ranked_{idx}.pdb')
-    with open(ranked_output_path, 'w') as f:
-      f.write(relaxed_pdbs[model_name])
-
-  ranking_output_path = os.path.join(output_dir, 'ranking_debug.json')
-  with open(ranking_output_path, 'w') as f:
-    f.write(json.dumps({'plddts': plddts, 'order': ranked_order}, indent=4))
-
-  logging.info('Final timings for %s: %s', fasta_name, timings)
-
-  timings_output_path = os.path.join(output_dir, 'timings.json')
-  with open(timings_output_path, 'w') as f:
-    f.write(json.dumps(timings, indent=4))
+      # Rank by pLDDT and write out relaxed PDBs in rank order.
+      ranked_order = []
+      for idx, (model_name, _) in enumerate(
+          sorted(plddts.items(), key=lambda x: x[1], reverse=True)):
+        ranked_order.append(model_name)
+        ranked_output_path = os.path.join(output_dir, f'ranked_{idx}.pdb')
+        with open(ranked_output_path, 'w') as f:
+          f.write(relaxed_pdbs[model_name])
+      
+      ranking_output_path = os.path.join(output_dir, 'ranking_debug.json')
+      with open(ranking_output_path, 'w') as f:
+        f.write(json.dumps({'plddts': plddts, 'order': ranked_order}, indent=4))
+      
+      logging.info('Final timings for %s: %s', fasta_name, timings)
+      
+      timings_output_path = os.path.join(output_dir, 'timings.json')
+      with open(timings_output_path, 'w') as f:
+        f.write(json.dumps(timings, indent=4))
 
 
 def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
+  print(FLAGS.preset)
 
   if FLAGS.preset == 'full_dbs':
     num_ensemble = 1
@@ -267,17 +325,17 @@ if __name__ == '__main__':
   flags.mark_flags_as_required([
       'fasta_paths',
       'output_dir',
-      'model_names',
-      'data_dir',
+#      'model_names',
+#      'data_dir',
       'preset',
-      'uniref90_database_path',
-      'mgnify_database_path',
-      'uniclust30_database_path',
-      'bfd_database_path',
-      'pdb70_database_path',
-      'template_mmcif_dir',
-      'max_template_date',
-      'obsolete_pdbs_path',
+#      'uniref90_database_path',
+#      'mgnify_database_path',
+#      'uniclust30_database_path',
+#      'bfd_database_path',
+#      'pdb70_database_path',
+#      'template_mmcif_dir',
+#      'max_template_date',
+#      'obsolete_pdbs_path',
   ])
 
   app.run(main)

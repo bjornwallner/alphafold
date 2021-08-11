@@ -19,6 +19,8 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
+from absl import logging
+
 # Internal import (7716).
 
 from alphafold.common import residue_constants
@@ -123,37 +125,70 @@ class DataPipeline:
     input_description = input_descs[0]
     num_res = len(input_sequence)
 
-    jackhmmer_uniref90_result = self.jackhmmer_uniref90_runner.query(
-        input_fasta_path)
-    jackhmmer_mgnify_result = self.jackhmmer_mgnify_runner.query(
-        input_fasta_path)
 
-    uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(
-        jackhmmer_uniref90_result['sto'], max_sequences=self.uniref_max_hits)
-    hhsearch_result = self.hhsearch_pdb70_runner.query(uniref90_msa_as_a3m)
-
+    #Adding checkpointing for the MSAs if the output files exists read them instead /BW
     uniref90_out_path = os.path.join(msa_output_dir, 'uniref90_hits.sto')
-    with open(uniref90_out_path, 'w') as f:
-      f.write(jackhmmer_uniref90_result['sto'])
+    jackhmmer_uniref90_result={}
+    if os.path.exists(uniref90_out_path):
+      logging.info(f'Checkpointing from {uniref90_out_path}')
+      with open(uniref90_out_path, 'r') as f:
+        jackhmmer_uniref90_result['sto']=f.read()
+    else:
+      jackhmmer_uniref90_result = self.jackhmmer_uniref90_runner.query(input_fasta_path)
+      with open(uniref90_out_path, 'w') as f:
+        f.write(jackhmmer_uniref90_result['sto'])
 
+        
     mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
-    with open(mgnify_out_path, 'w') as f:
-      f.write(jackhmmer_mgnify_result['sto'])
+    jackhmmer_mgnify_result={}
+    if os.path.exists(mgnify_out_path):
+      logging.info(f'Checkpointing from {mgnify_out_path}')
+      with open(mgnify_out_path, 'r') as f:
+        jackhmmer_mgnify_result['sto']=f.read()
+    else:
+      jackhmmer_mgnify_result = self.jackhmmer_mgnify_runner.query(input_fasta_path)
+      with open(mgnify_out_path, 'w') as f:
+        f.write(jackhmmer_mgnify_result['sto'])
+
+    hhsearch_hhr_out_path = os.path.join(msa_output_dir, f'hhsearch_uniref_max_hits{self.uniref_max_hits}.hhr')
+    hhsearch_results=''
+    
+    if os.path.exists(hhsearch_hhr_out_path):
+      logging.info(f'Checkpointing from {hhsearch_hhr_out_path}')
+      with open(hhsearch_hhr_out_path, 'r') as f:
+        hhsearch_result=f.read()
+    else:  
+      uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(
+        jackhmmer_uniref90_result['sto'], max_sequences=self.uniref_max_hits)
+      hhsearch_result = self.hhsearch_pdb70_runner.query(uniref90_msa_as_a3m)
+      if len(hhsearch_result)>0:
+        with open(hhsearch_hhr_out_path, 'w') as f:
+          f.write(hhsearch_result)
+
+    hhsearch_hits = parsers.parse_hhr(hhsearch_result)
+      
+
+   
 
     uniref90_msa, uniref90_deletion_matrix = parsers.parse_stockholm(
-        jackhmmer_uniref90_result['sto'])
+      jackhmmer_uniref90_result['sto'])
     mgnify_msa, mgnify_deletion_matrix = parsers.parse_stockholm(
-        jackhmmer_mgnify_result['sto'])
-    hhsearch_hits = parsers.parse_hhr(hhsearch_result)
+      jackhmmer_mgnify_result['sto'])
+    
+      
     mgnify_msa = mgnify_msa[:self.mgnify_max_hits]
     mgnify_deletion_matrix = mgnify_deletion_matrix[:self.mgnify_max_hits]
 
-    hhblits_bfd_uniclust_result = self.hhblits_bfd_uniclust_runner.query(
-        input_fasta_path)
-
     bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')
-    with open(bfd_out_path, 'w') as f:
-      f.write(hhblits_bfd_uniclust_result['a3m'])
+    hhblits_bfd_uniclust_result={}
+    if os.path.exists(bfd_out_path):
+      with open(bfd_out_path, 'r') as f:
+        hhblits_bfd_uniclust_result['a3m']=f.read()
+    else:
+      hhblits_bfd_uniclust_result = self.hhblits_bfd_uniclust_runner.query(
+        input_fasta_path)
+      with open(bfd_out_path, 'w') as f:
+        f.write(hhblits_bfd_uniclust_result['a3m'])
 
     bfd_msa, bfd_deletion_matrix = parsers.parse_a3m(
         hhblits_bfd_uniclust_result['a3m'])

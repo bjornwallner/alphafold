@@ -37,14 +37,14 @@ fi
 DOWNLOAD_DIR="$1"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 
-echo "Downloading AlphaFold parameters..."
-bash "${SCRIPT_DIR}/download_alphafold_params.sh" "${DOWNLOAD_DIR}"
+#echo "Downloading AlphaFold parameters..."
+#bash "${SCRIPT_DIR}/download_alphafold_params.sh" "${DOWNLOAD_DIR}"
 
-echo "Downloading BFD..."
-bash "${SCRIPT_DIR}/download_bfd.sh" "${DOWNLOAD_DIR}"
+#echo "Downloading BFD..."
+#bash "${SCRIPT_DIR}/download_bfd.sh" "${DOWNLOAD_DIR}"
 
-echo "Downloading MGnify..."
-bash "${SCRIPT_DIR}/download_mgnify.sh" "${DOWNLOAD_DIR}"
+#echo "Downloading MGnify..."
+#bash "${SCRIPT_DIR}/download_mgnify.sh" "${DOWNLOAD_DIR}"
 
 echo "Downloading PDB70..."
 bash "${SCRIPT_DIR}/download_pdb70.sh" "${DOWNLOAD_DIR}"
