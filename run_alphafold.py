@@ -21,6 +21,7 @@ import random
 import sys
 import time
 from typing import Dict
+from string import ascii_uppercase
 
 from absl import app
 from absl import flags
@@ -29,11 +30,13 @@ import numpy as np
 
 from alphafold.common import protein
 from alphafold.data import pipeline
+from alphafold.data import parsers
 from alphafold.data import templates
 from alphafold.model import data
 from alphafold.model import config
 from alphafold.model import model
 from alphafold.relax import relax
+
 # Internal import (7716).
 
 
@@ -129,6 +132,8 @@ flags.DEFINE_integer('random_seed', None, 'The random seed for the data '
                      'deterministic, because processes like GPU inference are '
                      'nondeterministic.')
 flags.DEFINE_integer('nstruct',1,'number of structures to generate for each model')
+flags.DEFINE_integer('chainbreak_offset',200,'number to offset the residue index in case of chain break')
+
 
 FLAGS = flags.FLAGS
 #print(FLAGS)
@@ -159,18 +164,81 @@ def predict_structure(
   if not os.path.exists(msa_output_dir):
     os.makedirs(msa_output_dir)
 
+  #check fasta file for chainbreaks
+  with open(fasta_path) as f:
+    input_fasta_str = f.read()
+  input_seqs, input_descs = parsers.parse_fasta(input_fasta_str)
+  if len(input_seqs) != 1:
+    raise ValueError(f'More than one input sequence found in {input_fasta_path}.')
+  input_sequence = input_seqs[0]
+  input_description = input_descs[0]
+
+  chain_numbering=[]
+  seqs=input_sequence.split('/')
+  fasta_concat=os.path.join(output_dir,f'concat.fasta')
+  with open(fasta_concat,'w') as f:
+    f.write(f'>{input_description} concat\n')
+    f.write("".join(seqs))
+    f.write('\n')
+  number_of_chains=0
+  for n,seq in enumerate(seqs):
+    chain=ascii_uppercase[n]
+    number_of_chains+=1
+    fasta_out=os.path.join(output_dir,f'chain{chain}.fasta')
+    print(fasta_out)
+    with open(fasta_out,'w') as f:
+        f.write(f'>{input_description} chain {chain}\n')
+        for s in seq:
+          f.write(s)
+          chain_numbering.append(n+1)
+        f.write('\n')
+
+  for a,b in zip("".join(seqs),chain_numbering):
+    print(a,b)
+    
+  print(input_sequence)
+  print(number_of_chains)
+
+
+
+  #Currently an MSA is made for the concatinated sequence
+  #Future feature will be to do the MSAs separately an merge them like so or paired:
+   # make multiple copies of msa for each copy
+  # AAA------
+  # ---AAA---
+  # ------AAA
+  #
+  # note: if you concat the sequences (as below), it does NOT work according to https://colab.research.google.com/github/sokrypton/ColabFold/blob/main/AlphaFold2.ipynb)
+  # AAAAAAAAA
+  
+  fasta_path=fasta_concat
   # Get features.
   t_0 = time.time()
   feature_dict = data_pipeline.process(
       input_fasta_path=fasta_path,
       msa_output_dir=msa_output_dir)
-  timings['features'] = time.time() - t_0
 
-  # Write out features as a pickled dictionary.
+    # Write out features as a pickled dictionary.
   features_output_path = os.path.join(output_dir, 'features.pkl')
   with open(features_output_path, 'wb') as f:
     pickle.dump(feature_dict, f, protocol=4)
 
+  if number_of_chains > 1:
+   # Based on Minkyung's code
+   # add big enough number to residue index to indicate chain breaks
+    #pointer to feature_dict
+    idx_res = feature_dict['residue_index']
+    for i,_ in enumerate(idx_res):
+      idx_res[i] += FLAGS.chainbreak_offset*chain_numbering[i]
+    #chains = list("".join([ascii_uppercase[n]*L for n,L in enumerate(Ls)]))
+    #feature_dict['residue_index'] = idx_res
+    
+      # Write out modified features as a pickled dictionary.
+    features_output_path = os.path.join(output_dir, 'features.modified.pkl')
+    with open(features_output_path, 'wb') as f:
+      pickle.dump(feature_dict, f, protocol=4)
+
+  timings['features'] = time.time() - t_0
   relaxed_pdbs = {}
   plddts = {}
 
