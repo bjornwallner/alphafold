@@ -60,9 +60,10 @@ class HHSearch:
     with utils.tmpdir_manager(base_dir='/tmp') as query_tmp_dir:
       input_path = os.path.join(query_tmp_dir, 'query.a3m')
       hhr_path = os.path.join(query_tmp_dir, 'output.hhr')
+      n_cpu=4
       with open(input_path, 'w') as f:
         f.write(a3m)
-
+        
       db_cmd = []
       for db_path in self.databases:
         db_cmd.append('-d')
@@ -70,6 +71,7 @@ class HHSearch:
       cmd = [self.binary_path,
              '-i', input_path,
              '-o', hhr_path,
+             '-cpu',str(n_cpu),
              '-maxseq', str(self.maxseq)
              ] + db_cmd
 

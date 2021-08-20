@@ -95,7 +95,8 @@ class DataPipeline:
                pdb70_database_path: str,
                template_featurizer: templates.TemplateHitFeaturizer,
                mgnify_max_hits: int = 501,
-               uniref_max_hits: int = 10000):
+               uniref_max_hits: int = 10000
+               skip_bfd: bool = False):
     """Constructs a feature dict for a given FASTA file."""
     self.jackhmmer_uniref90_runner = jackhmmer.Jackhmmer(
         binary_path=jackhmmer_binary_path,
@@ -103,6 +104,12 @@ class DataPipeline:
     self.hhblits_bfd_uniclust_runner = hhblits.HHBlits(
         binary_path=hhblits_binary_path,
         databases=[bfd_database_path, uniclust30_database_path])
+    self.hhblits_bfd_runner = hhblits.HHBlits(
+      binary_path=hhblits_binary_path,
+      databases=[bfd_database_path])
+    self.hhblits_uniclust_runner = hhblits.HHBlits(
+      binary_path=hhblits_binary_path,
+      databases=[uniclust30_database_path])
     self.jackhmmer_mgnify_runner = jackhmmer.Jackhmmer(
         binary_path=jackhmmer_binary_path,
         database_path=mgnify_database_path)
@@ -179,20 +186,41 @@ class DataPipeline:
     mgnify_msa = mgnify_msa[:self.mgnify_max_hits]
     mgnify_deletion_matrix = mgnify_deletion_matrix[:self.mgnify_max_hits]
 
-    bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')
-    hhblits_bfd_uniclust_result={}
-    if os.path.exists(bfd_out_path):
-      with open(bfd_out_path, 'r') as f:
-        hhblits_bfd_uniclust_result['a3m']=f.read()
-    else:
-      hhblits_bfd_uniclust_result = self.hhblits_bfd_uniclust_runner.query(
-        input_fasta_path)
-      with open(bfd_out_path, 'w') as f:
-        f.write(hhblits_bfd_uniclust_result['a3m'])
 
-    bfd_msa, bfd_deletion_matrix = parsers.parse_a3m(
+    
+
+    if skip_bfd:
+      uniclust_out_path = os.path.join(msa_output_dir, 'uniclust_hits.a3m')
+      hhblits_uniclust_result={}
+      if os.path.exists(uniclust_out_path):
+        with open(uniclust_out_path, 'r') as f:
+          hhblits_bfd_uniclust_result['a3m']=f.read()
+      else:
+        hhblits_bfd_uniclust_result = self.hhblits_uniclust_runner.query(
+          input_fasta_path)
+        with open(uniclust_out_path, 'w') as f:
+          f.write(hhblits_bfd_uniclust_result['a3m'])
+
+      bfd_msa, bfd_deletion_matrix = parsers.parse_a3m(
+        hhblits_bfd_uniclust_result['a3m'])
+    else:
+    
+      bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')
+      hhblits_bfd_uniclust_result={}
+      if os.path.exists(bfd_out_path):
+        with open(bfd_out_path, 'r') as f:
+          hhblits_bfd_uniclust_result['a3m']=f.read()
+      else:
+        hhblits_bfd_uniclust_result = self.hhblits_bfd_uniclust_runner.query(
+          input_fasta_path)
+        with open(bfd_out_path, 'w') as f:
+          f.write(hhblits_bfd_uniclust_result['a3m'])
+
+      bfd_msa, bfd_deletion_matrix = parsers.parse_a3m(
         hhblits_bfd_uniclust_result['a3m'])
 
+
+    
     templates_result = self.template_featurizer.get_templates(
         query_sequence=input_sequence,
         query_pdb_code=None,

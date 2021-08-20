@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH -n 1 -c 4
-#SBATCH --gpus-per-task=1
 
 
 module load Python/3.7.0-anaconda-5.3.0-extras-nsc1

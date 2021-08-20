@@ -60,8 +60,11 @@ bfd_database_path = os.path.join(
     'bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt')
 
 # Path to the Uniclust30 database for use by HHblits.
+#uniclust30_database_path = os.path.join(
+#    DOWNLOAD_DIR, 'uniclust30', 'uniclust30_2018_08', 'uniclust30_2018_08')
+
 uniclust30_database_path = os.path.join(
-    DOWNLOAD_DIR, 'uniclust30', 'uniclust30_2018_08', 'uniclust30_2018_08')
+    DOWNLOAD_DIR, 'uniclust30', 'UniRef30_2021_06', 'UniRef30_2021_06')
 
 # Path to the PDB70 database for use by HHsearch.
 pdb70_database_path = os.path.join(DOWNLOAD_DIR, 'pdb70', 'pdb70')
@@ -126,6 +129,8 @@ flags.DEFINE_boolean('benchmark', False, 'Run multiple JAX model evaluations '
                      'to obtain a timing that excludes the compilation time, '
                      'which should be more indicative of the time required for '
                      'inferencing many proteins.')
+flags.DEFINE_boolean('exit_after_sequence_search',False,'Will exit after sequence search')
+flags.DEFINE_boolean('skip_bfd',False,'Skip the large BFD database (1.5TB) search')
 flags.DEFINE_integer('random_seed', None, 'The random seed for the data '
                      'pipeline. By default, this is randomly generated. Note '
                      'that even if this is set, Alphafold may still not be '
@@ -185,7 +190,7 @@ def predict_structure(
     chain=ascii_uppercase[n]
     number_of_chains+=1
     fasta_out=os.path.join(output_dir,f'chain{chain}.fasta')
-    print(fasta_out)
+    #print(fasta_out)
     with open(fasta_out,'w') as f:
         f.write(f'>{input_description} chain {chain}\n')
         for s in seq:
@@ -193,8 +198,8 @@ def predict_structure(
           chain_numbering.append(n+1)
         f.write('\n')
 
-  for a,b in zip("".join(seqs),chain_numbering):
-    print(a,b)
+  #for a,b in zip("".join(seqs),chain_numbering):
+  #  print(a,b)
     
   print(input_sequence)
   print(number_of_chains)
@@ -214,15 +219,21 @@ def predict_structure(
   fasta_path=fasta_concat
   # Get features.
   t_0 = time.time()
-  feature_dict = data_pipeline.process(
+  features_output_path = os.path.join(output_dir, 'features.pkl')
+  if not os.path.exists(features_output_path):
+    feature_dict = data_pipeline.process(
       input_fasta_path=fasta_path,
       msa_output_dir=msa_output_dir)
 
     # Write out features as a pickled dictionary.
-  features_output_path = os.path.join(output_dir, 'features.pkl')
-  with open(features_output_path, 'wb') as f:
-    pickle.dump(feature_dict, f, protocol=4)
-
+    
+  
+    with open(features_output_path, 'wb') as f:
+      pickle.dump(feature_dict, f, protocol=4)
+  else:
+    feature_dict=pickle.load(open(features_output_path,'rb'))
+  if FLAGS.exit_after_sequence_search:
+    sys.exit()
   if number_of_chains > 1:
    # Based on Minkyung's code
    # add big enough number to residue index to indicate chain breaks
@@ -282,8 +293,13 @@ def predict_structure(
           f.write(protein.to_pdb(unrelaxed_protein))
           f.write(f"pLLDT MEAN   {np.mean(prediction_result['plddt'])}\n")
           f.write(f"pLLDT MEDIAN {np.median(prediction_result['plddt'])}\n")
+        with open(unrelaxed_pdb_path+'.plldt', 'w') as f:
+          for pos,plddt in enumerate(prediction_result['plddt'],1):
+            f.write(f'{pos} {plddt}\n')
+        
+          
 
-                  
+      
       # Relax the prediction.
 
 #      if not os.path.exists(relaxed_output_path):
@@ -350,8 +366,9 @@ def main(argv):
       bfd_database_path=FLAGS.bfd_database_path,
       uniclust30_database_path=FLAGS.uniclust30_database_path,
       pdb70_database_path=FLAGS.pdb70_database_path,
-      template_featurizer=template_featurizer)
-
+      template_featurizer=template_featurizer,
+      skip_bfd=FLAGS.skip_bfd)
+ 
   model_runners = {}
   for model_name in FLAGS.model_names:
     model_config = config.model_config(model_name)
@@ -406,4 +423,4 @@ if __name__ == '__main__':
 #      'obsolete_pdbs_path',
   ])
 
-  app.run(main)
+  app.run(mai
