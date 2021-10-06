@@ -32,6 +32,7 @@ from alphafold.data.tools import jackhmmer
 
 FeatureDict = Mapping[str, np.ndarray]
 
+#print(__file__)
 
 def make_sequence_features(
     sequence: str, description: str, num_res: int) -> FeatureDict:
@@ -95,7 +96,7 @@ class DataPipeline:
                pdb70_database_path: str,
                template_featurizer: templates.TemplateHitFeaturizer,
                mgnify_max_hits: int = 501,
-               uniref_max_hits: int = 10000
+               uniref_max_hits: int = 10000,
                skip_bfd: bool = False):
     """Constructs a feature dict for a given FASTA file."""
     self.jackhmmer_uniref90_runner = jackhmmer.Jackhmmer(
@@ -119,7 +120,7 @@ class DataPipeline:
     self.template_featurizer = template_featurizer
     self.mgnify_max_hits = mgnify_max_hits
     self.uniref_max_hits = uniref_max_hits
-
+    self.skip_bfd=skip_bfd
   def process(self, input_fasta_path: str, msa_output_dir: str) -> FeatureDict:
     """Runs alignment tools on the input sequence and creates features."""
     with open(input_fasta_path) as f:
@@ -189,9 +190,10 @@ class DataPipeline:
 
     
 
-    if skip_bfd:
+    if self.skip_bfd:
+      logging.info("Skipping large BFD database search")
       uniclust_out_path = os.path.join(msa_output_dir, 'uniclust_hits.a3m')
-      hhblits_uniclust_result={}
+      hhblits_bfd_uniclust_result={}
       if os.path.exists(uniclust_out_path):
         with open(uniclust_out_path, 'r') as f:
           hhblits_bfd_uniclust_result['a3m']=f.read()

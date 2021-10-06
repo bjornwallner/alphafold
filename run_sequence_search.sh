@@ -1,6 +1,9 @@
 #!/bin/bash
-#SSSBATCH -n 1 -c 4
-
+##SBATCH -N 1
+#SBATCH -n 1 -c 8
+###SBATCH -A snic2021-5-373
+#SBATCH -A liu-compute-2020-10
+#SBATCH -t 960
 
 module load Python/3.7.0-anaconda-5.3.0-extras-nsc1
 #module load buildenv-gcccuda/.11.1-9.3.0-bare

@@ -89,11 +89,12 @@ model_names = [
 
 
 
-flags.DEFINE_list('fasta_paths', None, 'Paths to FASTA files, each containing '
-                  'one sequence. Paths should be separated by commas. '
-                  'All FASTA paths must have a unique basename as the '
-                  'basename is used to name the output directories for '
-                  'each prediction.')
+flags.DEFINE_string('fasta1', None, 'Paths to FASTA file 1')
+flags.DEFINE_string('fasta2', None, 'Paths to FASTA file 2')
+flags.DEFINE_string('msa1', None, 'MSA1.')
+flags.DEFINE_string('msa2', None, 'MSA2')
+
+
 flags.DEFINE_string('output_dir', None, 'Path to a directory that will '
                     'store the results.')
 flags.DEFINE_list('model_names', model_names, 'Names of models to use.')
@@ -123,16 +124,11 @@ flags.DEFINE_string('max_template_date', '2050-01-01', 'Maximum template release
 flags.DEFINE_string('obsolete_pdbs_path', obsolete_pdbs_path, 'Path to file containing a '
                     'mapping from obsolete PDB IDs to the PDB IDs of their '
                     'replacements.')
-flags.DEFINE_enum('preset', 'full_dbs', ['full_dbs', 'casp14'],
-                  'Choose preset model configuration - no ensembling '
-                  '(full_dbs) or 8 model ensemblings (casp14).')
 flags.DEFINE_boolean('benchmark', False, 'Run multiple JAX model evaluations '
                      'to obtain a timing that excludes the compilation time, '
                      'which should be more indicative of the time required for '
                      'inferencing many proteins.')
 flags.DEFINE_boolean('exit_after_sequence_search',False,'Will exit after sequence search')
-flags.DEFINE_boolean('norelax',False,'Will skip relax') #exit after sequence search')
-
 flags.DEFINE_boolean('skip_bfd',False,'Skip the large BFD database (1.5TB) search')
 flags.DEFINE_integer('random_seed', None, 'The random seed for the data '
                      'pipeline. By default, this is randomly generated. Note '
@@ -141,7 +137,9 @@ flags.DEFINE_integer('random_seed', None, 'The random seed for the data '
                      'nondeterministic.')
 flags.DEFINE_integer('nstruct',1,'number of structures to generate for each model')
 flags.DEFINE_integer('chainbreak_offset',200,'number to offset the residue index in case of chain break')
-
+flags.DEFINE_integer('msas_to_use',3,'number of msa methods to use')
+flags.DEFINE_integer('max_recycles', 3,     'Number of recyles through the model')                                          
+flags.DEFINE_integer('tolerance', 0,     'Minimal CA RMS between recycles to keep recycling')                            
 
 FLAGS = flags.FLAGS
 #print(FLAGS)
@@ -152,7 +150,6 @@ RELAX_ENERGY_TOLERANCE = 2.39
 RELAX_STIFFNESS = 10.0
 RELAX_EXCLUDE_RESIDUES = []
 RELAX_MAX_OUTER_ITERATIONS = 20
-
 
 
 def predict_structure(
@@ -328,12 +325,7 @@ def predict_structure(
       # Relax the prediction.
       if not os.path.exists(relaxed_output_path):
         t_0 = time.time()
-        relaxed_pdb_str=''
-        if FLAGS.norelax:
-          logging.info('Skipping relax hack by setting rlx=unrlx')
-          relaxed_pdb_str=protein.to_pdb(unrelaxed_protein)
-        else:
-          relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
+        relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
         timings[f'relax_{model_name}'] = time.time() - t_0
 
         relaxed_pdbs[model_name] = relaxed_pdb_str
@@ -362,22 +354,129 @@ def predict_structure(
       with open(timings_output_path, 'w') as f:
         f.write(json.dumps(timings, indent=4))
 
+def paste_msa(msa1,dmsa1,msa2,dmsa2):
+# AAA---
+# ---BBB
+  L1=len(msa1[0])
+  L2=len(msa2[0])
+  msas = []
+  deletion_matrices = []
+  msas=[seq + '-'*L2 for seq in msa1] + ['-'*L1 + seq for seq in msa2]
+  deletion_matrices=[mtx+[0]*L2 for mtx in dmsa1] + [[0]*L1+mtx for mtx in dmsa2]
+  
+  return(msas,deletion_matrices)
+
+  
+
 
 def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
-  print(FLAGS.preset)
 
-  if FLAGS.preset == 'full_dbs':
-    num_ensemble = 1
-  elif FLAGS.preset == 'casp14':
-    num_ensemble = 8
+  target_name=f"{os.path.basename(FLAGS.fasta1)}-{os.path.basename(FLAGS.fasta2)}".replace('.fa','')
+  
+  num_ensemble = 1
+  output_dir_base=FLAGS.output_dir
+  output_dir = os.path.join(output_dir_base, target_name)
+  if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+  input_seqs1, input_descs1 = parsers.parse_fasta(open(FLAGS.fasta1,'r').read())
+  input_sequence1 = input_seqs1[0]
+  input_description1 = input_descs1[0]
 
-  # Check for duplicate FASTA file names.
-  fasta_names = [pathlib.Path(p).stem for p in FLAGS.fasta_paths]
-  if len(fasta_names) != len(set(fasta_names)):
-    raise ValueError('All FASTA paths must have a unique basename.')
+  input_seqs2, input_descs2 = parsers.parse_fasta(open(FLAGS.fasta2,'r').read())
+  input_sequence2 = input_seqs2[0]
+  input_description2 = input_descs2[0]
+  input_description=input_description1+input_description2
+  input_sequence=input_sequence1+input_sequence2
+  num_res = len(input_sequence)
+  num_res1=len(input_sequence1)
+  mgnify_max_hits=501
 
+  
+
+  msas=[]
+  deletion_matrices=[]
+
+  uniref90_file1=os.path.join(FLAGS.msa1,'uniref90_hits.sto')
+  uniref90_msa1, uniref90_deletion_matrix1 = parsers.parse_stockholm(open(uniref90_file1,'r').read())
+  uniref90_file2=os.path.join(FLAGS.msa2,'uniref90_hits.sto')
+  uniref90_msa2, uniref90_deletion_matrix2 = parsers.parse_stockholm(open(uniref90_file2,'r').read())
+  uniref90_msa,uniref90_deletion_matrix = paste_msa(uniref90_msa1, uniref90_deletion_matrix1,uniref90_msa2, uniref90_deletion_matrix2)
+  msas.append(uniref90_msa)
+  deletion_matrices.append(uniref90_deletion_matrix)
+  uniref90_msa1.clear()
+  uniref90_msa2.clear()
+  uniref90_deletion_matrix1.clear()
+  uniref90_deletion_matrix2.clear()
+
+  if FLAGS.msas_to_use > 1:
+    bfd_file1=os.path.join(FLAGS.msa1,'bfd_uniclust_hits.a3m')
+    bfd_msa1, bfd_deletion_matrix1 = parsers.parse_a3m(open(bfd_file1,'r').read())
+    bfd_file2=os.path.join(FLAGS.msa2,'bfd_uniclust_hits.a3m')
+    bfd_msa2, bfd_deletion_matrix2 = parsers.parse_a3m(open(bfd_file2,'r').read())
+    bfd_msa, bfd_deletion_matrix = paste_msa(bfd_msa1, bfd_deletion_matrix1, bfd_msa2, bfd_deletion_matrix2)
+    msas.append(bfd_msa)
+    deletion_matrices.append(bfd_deletion_matrix)
+    bfd_msa1.clear()
+    bfd_msa2.clear()
+    bfd_deletion_matrix1.clear()
+    bfd_deletion_matrix2.clear()
+
+
+  if FLAGS.msas_to_use > 2:
+    mgnify_file1=os.path.join(FLAGS.msa1,'mgnify_hits.sto')
+    mgnify_msa1, mgnify_deletion_matrix1 = parsers.parse_stockholm(open(mgnify_file1,'r').read())
+    mgnify_msa1 = mgnify_msa1[:mgnify_max_hits]
+    mgnify_deletion_matrix1 = mgnify_deletion_matrix1[:mgnify_max_hits]
+
+    mgnify_file2=os.path.join(FLAGS.msa2,'mgnify_hits.sto')
+    mgnify_msa2, mgnify_deletion_matrix2 = parsers.parse_stockholm(open(mgnify_file2,'r').read())
+    mgnify_msa2 = mgnify_msa2[:mgnify_max_hits]
+    mgnify_deletion_matrix2 = mgnify_deletion_matrix2[:mgnify_max_hits]
+    mgnify_msa, mgnify_deletion_matrix = paste_msa(mgnify_msa1, mgnify_deletion_matrix1,mgnify_msa2, mgnify_deletion_matrix2)
+
+    #msas=(uniref90_msa,bfd_msa,mgnify_msa)
+    #deletion_matrices=(uniref90_deletion_matrix,bfd_deletion_matrix,mgnify_deletion_matrix)
+    msas.append(mgnify_msa)
+    deletion_matrices.append(mgnify_deletion_matrix)
+
+#  hhrfile=os.path.join(FLAGS.msa1,'hhsearch_uniref_max_hits10000.hhr')
+
+
+
+
+
+  
+
+#  hhsearch_hits = parsers.parse_hhr(open(hhrfile,'r').read())
+
+
+  hhsearch_hits=''
+  #print(msas)
+  #print(len(uniref90_msa1))
+  #print(len(uniref90_msa1[0]))
+
+  #print(len(uniref90_msa2))
+  #print(len(uniref90_msa2[0]))
+  
+
+  #print("===============")
+  #print(num_res)
+  #print(len(msas))
+  #print(len(msas[0]))
+  #print(len(msas[0][0]))
+ #seen_sequences = set()
+ #for msa_index, msa in enumerate(msas):
+ #  for sequence_index, sequence in enumerate(msa):
+ #    if sequence in seen_sequences:
+ #      continue
+ #    seen_sequences.add(sequence)
+ #    
+ #
+ #sys.exit()
+  #print(hhsearch_hits)
+  hhsearch_hits=''
   template_featurizer = templates.TemplateHitFeaturizer(
       mmcif_dir=FLAGS.template_mmcif_dir,
       max_template_date=FLAGS.max_template_date,
@@ -385,23 +484,14 @@ def main(argv):
       kalign_binary_path=FLAGS.kalign_binary_path,
       release_dates_path=None,
       obsolete_pdbs_path=FLAGS.obsolete_pdbs_path)
-
-  data_pipeline = pipeline.DataPipeline(
-      jackhmmer_binary_path=FLAGS.jackhmmer_binary_path,
-      hhblits_binary_path=FLAGS.hhblits_binary_path,
-      hhsearch_binary_path=FLAGS.hhsearch_binary_path,
-      uniref90_database_path=FLAGS.uniref90_database_path,
-      mgnify_database_path=FLAGS.mgnify_database_path,
-      bfd_database_path=FLAGS.bfd_database_path,
-      uniclust30_database_path=FLAGS.uniclust30_database_path,
-      pdb70_database_path=FLAGS.pdb70_database_path,
-      template_featurizer=template_featurizer,
-      skip_bfd=FLAGS.skip_bfd)
+ 
  
   model_runners = {}
   for model_name in FLAGS.model_names:
     model_config = config.model_config(model_name)
     model_config.data.eval.num_ensemble = num_ensemble
+    model_config.data.common.num_recycle = FLAGS.max_recycles 
+    model_config.model.num_recycle = FLAGS.max_recycles
     model_params = data.get_model_haiku_params(
         model_name=model_name, data_dir=FLAGS.data_dir)
     model_runner = model.RunModel(model_config, model_params)
@@ -409,6 +499,7 @@ def main(argv):
 
   logging.info('Have %d models: %s', len(model_runners),
                list(model_runners.keys()))
+
 
   amber_relaxer = relax.AmberRelaxation(
       max_iterations=RELAX_MAX_ITERATIONS,
@@ -422,26 +513,135 @@ def main(argv):
     random_seed = random.randrange(sys.maxsize)
   logging.info('Using random seed %d for the data pipeline', random_seed)
 
-  # Predict structure for each of the sequences.
-  for fasta_path, fasta_name in zip(FLAGS.fasta_paths, fasta_names):
-    predict_structure(
-        fasta_path=fasta_path,
-        fasta_name=fasta_name,
-        output_dir_base=FLAGS.output_dir,
-        data_pipeline=data_pipeline,
-        model_runners=model_runners,
-        amber_relaxer=amber_relaxer,
-        benchmark=FLAGS.benchmark,
-        random_seed=random_seed)
+  template_results = template_featurizer.get_templates(
+    query_sequence=input_sequence,
+    query_pdb_code=None,
+    query_release_date=None,
+    hhr_hits=hhsearch_hits)
+  feature_dict = {
+    **pipeline.make_sequence_features(
+      sequence=input_sequence,
+      description=input_description,
+      num_res=num_res),
+    **pipeline.make_msa_features(
+      msas=msas, 
+      deletion_matrices=deletion_matrices),
+    **template_results.features
+  }
 
+  for n, msa in enumerate(msas):         
+    logging.info('MSA %d size: %d sequences.', n, len(msa))     
+    logging.info('Final (deduplicated) MSA size: %d sequences.',feature_dict['num_alignments'][0])
+    logging.info('Total number of templates: %d.', template_results.features['template_domain_names'].shape[0]) 
+    
+#  sys.exit()
+  features_output_path = os.path.join(output_dir, f'features_msas{FLAGS.msas_to_use}.pkl')
+  with open(features_output_path, 'wb') as f:
+      pickle.dump(feature_dict, f, protocol=4)
+    
+
+      # Based on Minkyug's code
+      # add big enough number to residue index to indicate chain breaks
+      #pointer to feature_dict
+  idx_res = feature_dict['residue_index']
+  for i,_ in enumerate(feature_dict['residue_index']):
+    if i>=num_res1:
+      feature_dict['residue_index'][i] += FLAGS.chainbreak_offset
+    print(i, input_sequence[i], feature_dict['residue_index'][i])
+        #idx_res[i] += FLAGS.chainbreak_offset
+    #chains = list("".join([ascii_uppercase[n]*L for n,L in enumerate(Ls)]))
+    #feature_dict['residue_index'] = idx_res
+    
+
+
+
+
+
+      # Write out modified features as a pickled dictionary.
+    #features_output_path = os.path.join(output_dir, 'features.modified.pkl')
+    features_output_path = os.path.join(output_dir, f'features_msas{FLAGS.msas_to_use}_chainbreak_offset{FLAGS.chainbreak_offset}.pkl')
+    with open(features_output_path, 'wb') as f:
+      pickle.dump(feature_dict, f, protocol=4)
+  unrelaxed_pdbs = {}
+  plddts = {}
+  # Run the models.
+  for network_model_name, model_runner in model_runners.items():
+    logging.info('Running model %s', network_model_name)
+    processed_feature_dict = model_runner.process_features(
+        feature_dict, random_seed=random_seed)
+    for model_no in range(1,FLAGS.nstruct+1):
+      model_name=f'{network_model_name}_msas{FLAGS.msas_to_use}_chainbreak_offset{FLAGS.chainbreak_offset}_recycles{FLAGS.max_recycles}_{model_no}'
+      unrelaxed_pdb_path = os.path.join(output_dir, f'unrelaxed_{model_name}.pdb')
+      relaxed_output_path = os.path.join(output_dir, f'relaxed_{model_name}.pdb')
+      result_output_path = os.path.join(output_dir, f'result_{model_name}.pkl')
+      prediction_result={}
+      unrelaxed_protein=None
+      if os.path.exists(unrelaxed_pdb_path):
+        logging.info(f'Found {unrelaxed_pdb_path}... loading predictions...')
+        with open(result_output_path,'rb') as f:
+          prediction_result=pickle.load(f)
+          plddt = prediction_result['plddt']
+          plddt_b_factors = np.repeat(plddt[:, None], residue_constants.atom_type_num, axis=-1)
+          unrelaxed_protein = protein.from_prediction(
+          features=processed_feature_dict,
+          result=prediction_result,
+          b_factors=plddt_b_factors)
+      else:
+        prediction_result = model_runner.predict(processed_feature_dict)
+        # Get mean pLDDT confidence metric.
+        plddt = prediction_result['plddt']
+        plddts[model_name] = np.mean(plddt)
+        # Save the model outputs.
+
+        with open(result_output_path, 'wb') as f:
+          pickle.dump(prediction_result, f, protocol=4)
+
+        
+#        unrelaxed_protein = protein.from_prediction(processed_feature_dict,
+#                                                prediction_result)
+         # Add the predicted LDDT in the b-factor column.
+        # Note that higher predicted LDDT value means higher model confidence.
+        plddt_b_factors = np.repeat(
+          plddt[:, None], residue_constants.atom_type_num, axis=-1)
+        unrelaxed_protein = protein.from_prediction(
+          features=processed_feature_dict,
+          result=prediction_result,
+          b_factors=plddt_b_factors)
+        
+        with open(unrelaxed_pdb_path, 'w') as f:
+          f.write(protein.to_pdb(unrelaxed_protein))
+          f.write(f"pLLDT MEAN   {np.mean(prediction_result['plddt'])}\n")
+          f.write(f"pLLDT MEDIAN {np.median(prediction_result['plddt'])}\n")
+        with open(unrelaxed_pdb_path+'.plldt', 'w') as f:
+          for pos,plddt in enumerate(prediction_result['plddt'],1):
+            f.write(f'{pos} {plddt}\n')
+        with open(unrelaxed_pdb_path, 'r') as f:
+          unrelaxed_pdbs[model_name]=f.read()
+      
+      # Rank by pLDDT and write out relaxed PDBs in rank order.
+      ranked_order = []
+      for idx, (model_name, _) in enumerate(
+          sorted(plddts.items(), key=lambda x: x[1], reverse=True)):
+        ranked_order.append(model_name)
+        ranked_output_path = os.path.join(output_dir, f'ranked_{idx}.pdb')
+        with open(ranked_output_path, 'w') as f:
+          f.write(unrelaxed_pdbs[model_name])
+      
+      ranking_output_path = os.path.join(output_dir, 'ranking_debug.json')
+      with open(ranking_output_path, 'w') as f:
+        f.write(json.dumps({'plddts': plddts, 'order': ranked_order}, indent=4))
+      
 
 if __name__ == '__main__':
   flags.mark_flags_as_required([
-      'fasta_paths',
+      'fasta1',
+    'fasta2',
+    'msa1',
+    'msa2',
       'output_dir',
 #      'model_names',
 #      'data_dir',
-      'preset',
+#     'preset',
 #      'uniref90_database_path',
 #      'mgnify_database_path',
 #      'uniclust30_database_path',

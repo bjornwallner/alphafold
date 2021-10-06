@@ -207,7 +207,8 @@ def ideal_atom_mask(prot: Protein) -> np.ndarray:
   return residue_constants.STANDARD_ATOM_MASK[prot.aatype]
 
 
-def from_prediction(features: FeatureDict, result: ModelOutput) -> Protein:
+def from_prediction(features: FeatureDict, result: ModelOutput,
+                    b_factors: Optional[np.ndarray] = None) -> Protein:
   """Assembles a protein from a prediction.
 
   Args:
@@ -218,11 +219,13 @@ def from_prediction(features: FeatureDict, result: ModelOutput) -> Protein:
     A protein instance.
   """
   fold_output = result['structure_module']
-  dist_per_residue = np.zeros_like(fold_output['final_atom_mask'])
+  if b_factors is None:
+    b_factors = np.zeros_like(fold_output['final_atom_mask'])
+
 
   return Protein(
       aatype=features['aatype'][0],
       atom_positions=fold_output['final_atom_positions'],
       atom_mask=fold_output['final_atom_mask'],
       residue_index=features['residue_index'][0] + 1,
-      b_factors=dist_per_residue)
+      b_factors=b_factors)
